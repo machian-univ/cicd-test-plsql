@@ -276,6 +276,10 @@ function runJest(projectRoot: string): TestRunResult {
       timeout: 300_000,
       maxBuffer: 30 * 1024 * 1024,
       shell: process.platform === 'win32',
+      env: {
+        ...process.env,
+        NODE_OPTIONS: '--experimental-vm-modules'
+      }
     });
   } catch (err: any) {
     if (err.stdout) {
