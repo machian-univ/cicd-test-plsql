@@ -1,7 +1,9 @@
-import { execFileSync, spawnSync } from 'child_process';
+import { spawnSync } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import type { LintResult, LintMessage, EslintComplexityMessage, TscError } from '../core/types.js';
+import { findLocalBin, useShellForLocalBin } from '../utils/bin.js';
+import { resolveExistingPaths, resolveTsConfigPath } from './pathUtils.js';
 
 interface EslintJsonMessage {
   ruleId: string | null;
@@ -38,10 +40,7 @@ export interface EslintRunResult {
 //  Вспомогательные функции 
 
 function findEslintBin(projectRoot: string): string | null {
-  // кроссплатформенность — .cmd на Windows
-  const ext = process.platform === 'win32' ? '.cmd' : '';
-  const binPath = path.join(projectRoot, 'node_modules', '.bin', `eslint${ext}`);
-  return fs.existsSync(binPath) ? binPath : null;
+  return findLocalBin(projectRoot, 'eslint');
 }
 
 function getEslintVersion(eslintBin: string): number {
@@ -49,7 +48,7 @@ function getEslintVersion(eslintBin: string): number {
     // shell: true для Windows
     const result = spawnSync(eslintBin, ['--version'], {
       encoding: 'utf8',
-      shell: process.platform === 'win32',
+      shell: useShellForLocalBin(),
       timeout: 10_000,
     });
     const match = result.stdout?.match(/v(\d+)\./);
@@ -143,14 +142,18 @@ export function runEslint(options: EslintRunOptions): EslintRunResult {
   }
 
   const version = getEslintVersion(eslintBin);
-  const normalizedPaths = targetPaths.map(p =>
-    path.isAbsolute(p) ? p : path.join(projectRoot, p)
-  );
+  const normalizedPaths = resolveExistingPaths(projectRoot, targetPaths);
 
-  // Проверяем, есть ли файл нового конфига в корне
-  const hasFlatConfig = fs.readdirSync(projectRoot).some(file => 
-    file.startsWith('eslint.config.')
-  );
+  if (normalizedPaths.length === 0) {
+    return { lintResults: [], complexityMessages: [] };
+  }
+
+  let hasFlatConfig = false;
+  try {
+    hasFlatConfig = fs.readdirSync(projectRoot).some(file =>
+      file.startsWith('eslint.config.')
+    );
+  } catch { /* нет доступа — считаем legacy */ }
 
   const args = ['--format', 'json', '--no-error-on-unmatched-pattern'];
 
@@ -180,8 +183,7 @@ export function runEslint(options: EslintRunOptions): EslintRunResult {
     const result = spawnSync(eslintBin, args, {
       cwd: projectRoot,
       encoding: 'utf8',
-      // shell: true обязательно для Windows
-      shell: process.platform === 'win32',
+      shell: useShellForLocalBin(),
       env,
       timeout: 300_000,
       // maxBuffer 50MB
@@ -260,37 +262,53 @@ export function runEslint(options: EslintRunOptions): EslintRunResult {
 // tsc --noEmit
 
 export function runTsc(projectRoot: string): { errors: TscError[]; runError?: string } {
-  // req. 4: кроссплатформенность
-  const ext = process.platform === 'win32' ? '.cmd' : '';
-  const tscBin = path.join(projectRoot, 'node_modules', '.bin', `tsc${ext}`);
+  const tscBin = findLocalBin(projectRoot, 'tsc');
 
-  if (!fs.existsSync(tscBin)) {
+  if (!tscBin) {
     return {
       errors: [],
       runError: 'TypeScript не установлен в проекте. Добавьте typescript в devDependencies.',
     };
   }
 
-  const tsConfigPath = path.join(projectRoot, 'tsconfig.json');
-  if (!fs.existsSync(tsConfigPath)) {
+  const tsConfigPath = resolveTsConfigPath(projectRoot);
+  if (!tsConfigPath) {
     return {
       errors: [],
-      runError: 'tsconfig.json не найден. Создайте его или запустите pulsqual init.',
+      runError: 'tsconfig не найден. Создайте tsconfig.json или запустите pulsqual init.',
     };
+  }
+
+  const tscArgs = ['--noEmit', '--pretty', 'false'];
+  if (path.basename(tsConfigPath) !== 'tsconfig.json') {
+    tscArgs.push('-p', tsConfigPath);
   }
 
   let output = '';
   try {
-    execFileSync(tscBin, ['--noEmit', '--pretty', 'false'], {
+    const result = spawnSync(tscBin, tscArgs, {
       cwd: projectRoot,
       encoding: 'utf8',
-      stdio: ['pipe', 'pipe', 'pipe'],
+      shell: useShellForLocalBin(),
       timeout: 120_000,
       maxBuffer: 10 * 1024 * 1024,
     });
-    return { errors: [] };
-  } catch (err: any) {
-    output = (err.stdout ?? '') + (err.stderr ?? '');
+    if (result.status === 0) {
+      return { errors: [] };
+    }
+    output = (result.stdout ?? '') + (result.stderr ?? '');
+    if (!output.trim() && result.error) {
+      return {
+        errors: [],
+        runError: `tsc завершился с кодом ${result.status}: ${result.error.message}`,
+      };
+    }
+  } catch (err: unknown) {
+    const e = err as { message?: string };
+    return {
+      errors: [],
+      runError: `Критическая ошибка запуска tsc: ${e.message ?? String(err)}`,
+    };
   }
 
   const errors: TscError[] = [];

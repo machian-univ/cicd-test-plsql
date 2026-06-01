@@ -1,4 +1,5 @@
 import fs from 'fs';
+import path from 'path';
 import type { Agent } from '../base/Agent.js';
 import { makeResult, makeError } from '../base/Agent.js';
 import type { RunContext } from '../../core/RunContext.js';
@@ -6,6 +7,7 @@ import type {
   LintResult, LintMessage, AgentResult, ProjectContext, AnalysisSharedData,
 } from '../../core/types.js';
 import { runEslint, runTsc } from '../../analysis/EslintRunner.js';
+import { resolveExistingPaths } from '../../analysis/pathUtils.js';
 import { logger } from '../../utils/logger.js';
 
 export class StaticAnalysisAgent implements Agent<LintResult[]> {
@@ -57,9 +59,11 @@ export class StaticAnalysisAgent implements Agent<LintResult[]> {
           return this.returnEmpty(context, Date.now() - start);
         }
 
-        const lintableFiles = changedFiles.filter(f =>
-          extensions.some(ext => f.endsWith(ext))
-        );
+        const lintableFiles = changedFiles.filter(f => {
+          if (!extensions.some(ext => f.endsWith(ext))) return false;
+          const abs = path.isAbsolute(f) ? f : path.join(projectRoot, f);
+          return fs.existsSync(abs);
+        });
 
         if (lintableFiles.length === 0) {
           logger.verbose(
@@ -99,13 +103,22 @@ export class StaticAnalysisAgent implements Agent<LintResult[]> {
         return result;
       }
 
-      // CI/Full-режим
-      const sourcePath = config.paths.source;
-      const testsPath  = config.paths.tests;
+      // CI/Full-режим — только существующие каталоги/файлы
+      const lintTargets = resolveExistingPaths(projectRoot, [
+        config.paths.source,
+        config.paths.tests,
+      ]);
+
+      if (lintTargets.length === 0) {
+        logger.verbose(
+          'StaticAnalysisAgent: каталоги source/tests не найдены, пропускаем lint'
+        );
+        return this.returnEmpty(context, Date.now() - start);
+      }
 
       eslintRunResult = runEslint({
         projectRoot,
-        targetPaths: [sourcePath, testsPath],
+        targetPaths: lintTargets,
         extensions,
         failSilently: true,
         requiresDecorators,

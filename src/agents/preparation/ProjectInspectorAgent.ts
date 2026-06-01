@@ -27,15 +27,40 @@ function fileExists(root: string, rel: string): boolean {
 
 function detectTestRunner(
   deps: Record<string, string>,
-  devDeps: Record<string, string>
+  devDeps: Record<string, string>,
+  rootPath: string,
 ): TestRunner {
   const all = { ...deps, ...devDeps };
-  if (all.vitest || all['@vitest/coverage-v8'] || all['@vitest/coverage-istanbul'])
-    return 'vitest';
-  if (all.jest || all['ts-jest'] || all['@jest/globals'])
-    return 'jest';
-  if (all.mocha)
-    return 'mocha';
+  const hasVitest = Boolean(
+    all.vitest || all['@vitest/coverage-v8'] || all['@vitest/coverage-istanbul'],
+  );
+  const hasJest = Boolean(all.jest || all['ts-jest'] || all['@jest/globals']);
+
+  const pkg = safeReadJsonFile<{ scripts?: Record<string, string> }>(
+    path.join(rootPath, 'package.json'),
+  );
+  const testScript = pkg?.scripts?.test ?? '';
+
+  if (/vitest/i.test(testScript)) return 'vitest';
+  if (/\bjest\b/i.test(testScript)) return 'jest';
+
+  const hasVitestConfig =
+    fileExists(rootPath, 'vitest.config.ts') ||
+    fileExists(rootPath, 'vitest.config.mts') ||
+    fileExists(rootPath, 'vitest.config.js');
+  const hasJestConfig =
+    fileExists(rootPath, 'jest.config.js') ||
+    fileExists(rootPath, 'jest.config.ts') ||
+    fileExists(rootPath, 'jest.config.mjs');
+
+  if (hasVitest && hasJest) {
+    if (hasVitestConfig && !hasJestConfig) return 'vitest';
+    if (hasJestConfig && !hasVitestConfig) return 'jest';
+  }
+
+  if (hasVitest) return 'vitest';
+  if (hasJest) return 'jest';
+  if (all.mocha) return 'mocha';
   return 'unknown';
 }
 
@@ -103,7 +128,8 @@ function detectHasGit(root: string): boolean {
 const ESLINT_CONFIG_FILES = [
   '.eslintrc', '.eslintrc.js', '.eslintrc.cjs', '.eslintrc.mjs',
   '.eslintrc.json', '.eslintrc.yaml', '.eslintrc.yml',
-  'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs', 'eslint.config.ts',
+  'eslint.config.js', 'eslint.config.mjs', 'eslint.config.cjs',
+  'eslint.config.ts', 'eslint.config.mts', 'eslint.config.cts',
 ];
 
 function detectEslintConfig(root: string): { exists: boolean; configPath?: string } {
@@ -329,7 +355,7 @@ export class ProjectInspectorAgent {
       const hasNuxt       = detectHasNuxt(dependencies, devDependencies);
       const hasNext       = detectHasNext(dependencies, devDependencies);
       const hasEslint     = detectHasEslint(dependencies, devDependencies);
-      const testRunner    = detectTestRunner(dependencies, devDependencies);
+      const testRunner    = detectTestRunner(dependencies, devDependencies, rootPath);
 
       const eslintConfigDetection = detectEslintConfig(rootPath);
 
