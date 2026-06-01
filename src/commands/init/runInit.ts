@@ -123,11 +123,12 @@ export async function runInit(options: InitOptions): Promise<void> {
       'Зависимости не устанавливаются: ESLint-плагины могут отсутствовать. ' +
       'eslint.config.mjs будет сгенерирован только для уже установленных пакетов.',
     );
-    await installEslintPluginsForStack(root, project, pm, false);
     const updatedProject = await inspectProject(root) ?? project;
-    await maybeCreateEslintConfig(root, updatedProject, false);
-    await createConfigAndDir(root, updatedProject);
+    await installEslintPluginsForStack(root, updatedProject, pm, false);
+    const afterPlugins = await inspectProject(root) ?? updatedProject;
+    await maybeCreateEslintConfig(root, afterPlugins, false);
+    await createConfigAndDir(root, afterPlugins);
     const config = loadConfig(root);
-    printInstallStatus(project.hasEslint, project.testRunner !== 'unknown', pm, updatedProject, config);
+    printInstallStatus(project.hasEslint, project.testRunner !== 'unknown', pm, afterPlugins, config);
   }
 }

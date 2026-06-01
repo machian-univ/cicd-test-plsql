@@ -6,6 +6,7 @@ import { findProjectRoot, isInitialized, loadConfig, saveConfig } from '../utils
 import { LLMProviderRegistry } from '../adapters/llm/LLMProvider.js';
 import { LLM_LIMITS_INFO } from '../llm/llmLimits.js';
 import { getLlmApiKey } from '../llm/resolveLlmConfig.js';
+import { persistEnvVariable } from '../utils/envStore.js';
 
 import '../adapters/llm/OllamaProvider.js';
 import '../adapters/llm/GigaChatProvider.js';
@@ -255,13 +256,23 @@ export async function runConfigLlmEnable(): Promise<void> {
     }]);
 
     if (apiKey) {
-      config.llm.api_key_env = 'GIGACHAT_API_KEY';
-      logger.info(
-        'API-ключ не сохраняется в конфигурационный файл напрямую.\n' +
-        'Установите переменную окружения:\n' +
-        `  export GIGACHAT_API_KEY="${apiKey}"\n` +
-        'Или добавьте в файл .env (убедитесь, что он в .gitignore).'
-      );
+      const envName = 'GIGACHAT_API_KEY';
+      config.llm.api_key_env = envName;
+      const persisted = persistEnvVariable(envName, apiKey, root);
+      if (persisted.envFileUpdated) {
+        logger.success(
+          `Переменная ${envName} установлена в текущей сессии и сохранена в ${persisted.envFilePath}`,
+        );
+        logger.info('Убедитесь, что .env добавлен в .gitignore.');
+      } else {
+        logger.success(`Переменная ${envName} установлена в текущей сессии.`);
+        logger.warn(
+          `Не удалось записать .env. Установите вручную:\n` +
+          (process.platform === 'win32'
+            ? `  set ${envName}=${apiKey}\n`
+            : `  export ${envName}="${apiKey}"\n`),
+        );
+      }
     }
   }
 

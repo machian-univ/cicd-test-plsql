@@ -50,14 +50,15 @@ export async function runFullSetup(
   }
 
   await maybeCreateTsConfig(root, project);
-  await installEslintPluginsForStack(root, project, pm, true);
 
   const updatedProject = await inspectProject(root) ?? project;
-  await maybeCreateEslintConfig(root, updatedProject, true);
-  await createConfigAndDir(root, updatedProject);
+  await installEslintPluginsForStack(root, updatedProject, pm, true);
+  const projectAfterPlugins = await inspectProject(root) ?? updatedProject;
+  await maybeCreateEslintConfig(root, projectAfterPlugins, true);
+  await createConfigAndDir(root, projectAfterPlugins);
 
   const config = loadConfig(root);
-  printInstallStatus(eslintOk, runnerOk, pm, updatedProject, config);
+  printInstallStatus(eslintOk, runnerOk, pm, projectAfterPlugins, config);
 }
 
 export async function runSelectiveSetup(
@@ -126,13 +127,15 @@ export async function runSelectiveSetup(
 
   logger.blank();
   await maybeCreateTsConfig(root, projectWithStack);
-  await installEslintPluginsForStack(root, projectWithStack, pm, false);
 
   const updatedProject = await inspectProject(root) ?? projectWithStack;
   const finalProject = applyManualStackToProject(updatedProject, stackSelection);
-  await maybeCreateEslintConfig(root, finalProject, false);
-  await createConfigAndDir(root, finalProject);
+  await installEslintPluginsForStack(root, finalProject, pm, false);
+  const finalAfterPlugins = await inspectProject(root) ?? finalProject;
+  const finalWithStack = applyManualStackToProject(finalAfterPlugins, stackSelection);
+  await maybeCreateEslintConfig(root, finalWithStack, false);
+  await createConfigAndDir(root, finalWithStack);
 
   const config = loadConfig(root);
-  printInstallStatus(eslintOk, runnerOk, pm, finalProject, config);
+  printInstallStatus(eslintOk, runnerOk, pm, finalWithStack, config);
 }

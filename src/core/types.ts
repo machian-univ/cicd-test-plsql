@@ -328,9 +328,16 @@ export interface ComplexityResult {
   status: 'ok' | 'skipped' | 'error';
   errorMessage?: string;
   skipReason?: 'no_plugin_or_rule' | 'below_threshold';
+  thresholdExceeded?: boolean;
   fileLocs: FileLoc[];
   totalLoc: number;
   avgFileLoc: number;
+}
+
+export interface CiCheckStats {
+  total: number;
+  passed: number;
+  failed: number;
 }
 
 //Security 
@@ -496,6 +503,7 @@ export interface ProgressResult {
   delta: number | null;
   trend: 'up' | 'down' | 'stable' | 'unknown';
   checksCount: number;
+  ciCheckStats?: CiCheckStats;
 }
 
 export interface Achievement {

@@ -18,26 +18,26 @@ class GitHubActionsGenerator implements CIGenerator {
 
   generate(config: PulsqualConfig, opts: CIGeneratorOptions): string {
     const onBlock = this.buildOnBlock(opts.trigger);
-    const threshold = opts.qScoreThreshold ?? config.thresholds.q_score;
+    const threshold = config.thresholds.q_score;
     const llmEnvSection = this.buildLlmEnvSection(opts);
+    const gitleaksStep = this.buildGitleaksInstallStep(opts.useGitleaks);
 
-const pulsqualInstallComment =
-  '      # Установка Pulsqual напрямую из публичного Git-репозитория:\n' +
-  '      - name: Install Pulsqual\n' +
-  '        run: npm install --save-dev github:machian-univ/cicd-test-plsql\n' +
-  '        # Заменяется на "npm install --save-dev pulsqual" после официальной публикации в npmjs';
-    
-  return `# .github/workflows/pulsqual.yml
+    const pulsqualInstallComment =
+      '      # Установка Pulsqual напрямую из публичного Git-репозитория:\n' +
+      '      - name: Install Pulsqual\n' +
+      '        run: npm install --save-dev github:machian-univ/cicd-test-plsql\n' +
+      '        # Заменяется на "npm install --save-dev pulsqual" после официальной публикации в npmjs';
+
+    return `# .github/workflows/pulsqual.yml
 # Автоматически создан командой: pulsqual ci setup
 #
 # НАЗНАЧЕНИЕ:
 #   Проверка качества кода при создании Pull Request.
-#   Блокирует слияние при Q-Score ниже порога ${threshold}.
+#   Блокирует слияние при Q-Score ниже порога ${threshold} (из .pulsqual.yml).
 #
 # ИСТОРИЯ Q-SCORE:
 #   БД (.pulsqual/pulsqual.db) кэшируется между запусками через actions/cache.
-#   Это позволяет строить график динамики Q-Score в отчёте.
-#   Кэш привязан к ветке — каждая ветка имеет свою историю.
+#   Сохраняется после каждой проверки (включая неуспешные по порогу).
 
 name: Code Quality Check (Pulsqual)
 
@@ -51,44 +51,50 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      # Шаг 1: клонирование с полной историей
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # Шаг 2: Node.js
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
 
-      # Шаг 3: Восстановление БД истории Q-Score из кэша
-      # Это позволяет графику в отчёте показывать историю предыдущих проверок
       - name: Restore Pulsqual database cache
         uses: actions/cache@v4
+        id: pulsqual-db-cache
         with:
           path: .pulsqual/pulsqual.db
-          key: pulsqual-db-\${{ github.ref_name }}
+          key: pulsqual-db-\${{ github.event.pull_request.number || github.ref_name }}
           restore-keys: |
             pulsqual-db-
 
-      # Шаг 4: установка зависимостей
+      - name: Fetch base branch for diff
+        run: |
+          git fetch origin \${{ github.base_ref || 'main' }} --depth=1 || true
+          git branch -a
+
       - name: Install project dependencies
         run: npm ci
 
+${gitleaksStep}
 ${pulsqualInstallComment}
 
-      # Шаг 5: запуск проверки
       - name: Run Pulsqual quality check
         run: npx pulsqual check --ci
         env:
           CI: true
-          # Текущий порог: ${threshold}
 ${llmEnvSection}
 
-      # Шаг 6: загрузка отчёта как артефакта
+      - name: Save Pulsqual database cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .pulsqual/pulsqual.db
+          key: \${{ steps.pulsqual-db-cache.outputs.cache-primary-key }}
+
       - name: Upload quality report
         if: always()
         uses: actions/upload-artifact@v4
@@ -97,15 +103,32 @@ ${llmEnvSection}
           path: .pulsqual/reports/*.html
           retention-days: 30
 
-      # Шаг 7: итоговый вывод
       - name: Print quality summary
         if: always()
         run: |
           echo "=== Pulsqual Quality Check Summary ==="
-          echo "Threshold: ${threshold}"
+          echo "Threshold (from .pulsqual.yml): ${threshold}"
           echo "Report: .pulsqual/reports/"
           echo "For detailed results, download the quality-report artifact above."
 `;
+  }
+
+  private buildGitleaksInstallStep(useGitleaks: boolean): string {
+    if (!useGitleaks) {
+      return (
+        '      # gitleaks не используется (отключено при pulsqual ci setup)\n'
+      );
+    }
+
+    return (
+      '      - name: Install gitleaks\n' +
+      '        run: |\n' +
+      '          GITLEAKS_VERSION=8.21.2\n' +
+      '          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" -o gitleaks.tar.gz\n' +
+      '          tar -xzf gitleaks.tar.gz gitleaks\n' +
+      '          sudo mv gitleaks /usr/local/bin/\n' +
+      '          gitleaks version\n'
+    );
   }
 
   private buildOnBlock(trigger: CITrigger): string {
@@ -147,16 +170,13 @@ ${llmEnvSection}
 
     if (opts.llmSecretAdded) {
       return (
-        '          # LLM-рецензент: API-ключ GigaChat из GitHub Secrets\n' +
-        '          GIGACHAT_API_KEY: ${{ secrets.GIGACHAT_API_KEY }}'
+        '          GIGACHAT_API_KEY: ${{ secrets.GIGACHAT_API_KEY }}\n'
       );
     }
 
     return (
-      '          # LLM-рецензент: раскомментируйте после добавления ключа в Secrets\n' +
-      '          # Инструкция: Settings -> Secrets and variables -> Actions -> New repository secret\n' +
-      '          # Name: GIGACHAT_API_KEY, Value: ваш API-ключ GigaChat\n' +
-      '          # GIGACHAT_API_KEY: ${{ secrets.GIGACHAT_API_KEY }}'
+      '          # LLM: раскомментируйте после добавления GIGACHAT_API_KEY в Secrets\n' +
+      '          # GIGACHAT_API_KEY: ${{ secrets.GIGACHAT_API_KEY }}\n'
     );
   }
 }

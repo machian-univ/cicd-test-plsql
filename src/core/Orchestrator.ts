@@ -26,6 +26,7 @@ import { ScoreCalculatorAgent } from '../agents/output/ScoreCalculatorAgent.js';
 import { ReportAgent } from '../agents/output/ReportAgent.js';
 import type { QScoreHistoryPoint } from './RunContext.js';
 import { resolveLlmForRun } from '../llm/resolveLlmConfig.js';
+import { ensureEslintStackWithLog } from '../preparation/ensureEslintStack.js';
 
 export interface OrchestratorRunOptions {
   projectRoot: string;
@@ -108,8 +109,23 @@ export class Orchestrator {
     logger.step('[EnvCheckerAgent]');
     ctx = await this.runAgent(new EnvCheckerAgent(), ctx, 'envCheck');
 
+    let projectCtx  = ctx.get('projectContext')?.data as ProjectContext | null;
     const envData     = ctx.get('envCheck')?.data as EnvCheckResult | null;
-    const projectCtx  = ctx.get('projectContext')?.data as ProjectContext | null;
+
+    if (projectCtx?.hasEslint) {
+      const refreshed = await ensureEslintStackWithLog(
+        projectRoot,
+        projectCtx,
+        nonInteractive,
+      );
+      projectCtx = refreshed;
+      ctx = ctx.with({
+        projectContext: {
+          ...ctx.get('projectContext')!,
+          data: refreshed,
+        },
+      });
+    }
 
     if (envData) {
       for (const warn of envData.warnings) {

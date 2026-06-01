@@ -53,4 +53,5 @@ export interface ReportHtmlData {
   detectedVersions: DetectedVersions;
   achievements: Achievement[];
   llmReview: LLMReviewResult | null;
+  projectRoot?: string;
 }

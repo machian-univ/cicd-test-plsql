@@ -254,9 +254,59 @@ export function runEslint(options: EslintRunOptions): EslintRunResult {
     };
   });
 
-  const complexityMessages = extractComplexityMessages(parsed);
+  let complexityMessages = extractComplexityMessages(parsed);
+
+  if (complexityMessages.length === 0 && !configError && !runError) {
+    complexityMessages = runComplexityProbe(
+      eslintBin,
+      projectRoot,
+      normalizedPaths,
+      env,
+    );
+  }
 
   return { lintResults, complexityMessages, runError };
+}
+
+/**
+ * Дополнительный прогон ESLint с низким порогом complexity,
+ * чтобы собрать метрики по всем функциям (не только превышающим порог в eslint.config).
+ */
+function runComplexityProbe(
+  eslintBin: string,
+  projectRoot: string,
+  normalizedPaths: string[],
+  env: Record<string, string>,
+): EslintComplexityMessage[] {
+  if (normalizedPaths.length === 0) return [];
+
+  const args = [
+    '--format', 'json',
+    '--no-error-on-unmatched-pattern',
+    '--rule', 'complexity: ["warn", 1]',
+    '--rule', 'sonarjs/cognitive-complexity: ["warn", 1]',
+    ...normalizedPaths,
+  ];
+
+  try {
+    const result = spawnSync(eslintBin, args, {
+      cwd: projectRoot,
+      encoding: 'utf8',
+      shell: useShellForLocalBin(),
+      env,
+      timeout: 300_000,
+      maxBuffer: 50 * 1024 * 1024,
+    });
+
+    const rawOutput = result.stdout || '';
+    if (!rawOutput.trim().startsWith('[')) return [];
+
+    const jsonStart = rawOutput.indexOf('[');
+    const parsed = JSON.parse(rawOutput.substring(jsonStart)) as EslintJsonResult[];
+    return extractComplexityMessages(parsed);
+  } catch {
+    return [];
+  }
 }
 
 // tsc --noEmit

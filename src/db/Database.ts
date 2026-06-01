@@ -615,6 +615,40 @@ export class Database {
     return Number.isFinite(cnt) ? cnt : 0;
   }
 
+  async getCheckStatsForBranch(branch: string | null): Promise<{
+    total: number;
+    passed: number;
+    failed: number;
+  }> {
+    await this.ready;
+
+    if (!branch) {
+      const total = await this.getChecksCount();
+      return { total, passed: 0, failed: 0 };
+    }
+
+    const result = this.db.exec(
+      `SELECT
+         COUNT(*) as total,
+         SUM(CASE WHEN gate_passed = 1 THEN 1 ELSE 0 END) as passed
+       FROM checks
+       WHERE branch = ? AND mode IN ('full', 'ci')`,
+      [branch],
+    );
+
+    if (!result[0] || result[0].values.length === 0) {
+      return { total: 0, passed: 0, failed: 0 };
+    }
+
+    const total = Number(result[0].values[0]?.[0] ?? 0);
+    const passed = Number(result[0].values[0]?.[1] ?? 0);
+    return {
+      total: Number.isFinite(total) ? total : 0,
+      passed: Number.isFinite(passed) ? passed : 0,
+      failed: Math.max(0, (Number.isFinite(total) ? total : 0) - (Number.isFinite(passed) ? passed : 0)),
+    };
+  }
+
   close(): void {
     this.persist();
   }

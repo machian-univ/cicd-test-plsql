@@ -108,13 +108,28 @@ export const REPORT_STYLES = `
       background: rgba(0,255,136,.04);
       color: var(--text);
       white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      max-width: 240px;
+      max-width: none;
     }
 
     .hbadge .hb-label { color: var(--text-dim); margin-right: 4px; }
     .hbadge .hb-val   { color: var(--accent); font-weight: 600; }
+
+    .header-merge-banner {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      margin-top: 8px;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+
+    .header-merge-banner strong { color: var(--accent); font-weight: 600; }
+
+    .file-path-cell {
+      word-break: break-all;
+      white-space: normal;
+      max-width: none;
+    }
 
     .header-commit-msg {
       font-family: var(--font-mono);

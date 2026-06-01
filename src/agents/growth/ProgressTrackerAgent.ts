@@ -17,8 +17,10 @@ export class ProgressTrackerAgent implements Agent<ProgressResult> {
       const outputDir = path.join(context.get('projectRoot'), config.paths.output);
       const db = new Database(outputDir);
 
+      const branch = context.get('branch');
       const prevScore = await db.getPreviousQScore();
       const checksCount = await db.getChecksCount();
+      const branchStats = await db.getCheckStatsForBranch(branch ?? null);
 
       // Загружаем историю для графика (последние 20 проверок)
       const historyRaw = await db.getQScoreHistory(20);
@@ -32,7 +34,9 @@ export class ProgressTrackerAgent implements Agent<ProgressResult> {
       db.close();
 
       const scoresResult = context.get('scores');
-      const currentQScore = (scoresResult?.data as Scores | null)?.qScore ?? null;
+      const scoresData = scoresResult?.data as Scores | null;
+      const currentQScore = scoresData?.qScore ?? null;
+      const currentGatePassed = scoresData?.gatePassed ?? false;
 
       let delta: number | null = null;
       let trend: ProgressResult['trend'] = 'unknown';
@@ -46,11 +50,16 @@ export class ProgressTrackerAgent implements Agent<ProgressResult> {
         previousQScore: prevScore,
         delta,
         trend,
-        // +1 потому что текущая проверка ещё не записана в БД
         checksCount: checksCount + 1,
+        ciCheckStats: context.get('mode') === 'ci'
+          ? {
+              total: branchStats.total + 1,
+              passed: branchStats.passed + (currentGatePassed ? 1 : 0),
+              failed: branchStats.failed + (currentGatePassed ? 0 : 1),
+            }
+          : undefined,
       };
 
-      // Сохраняем историю в контекст через служебное поле
       (result as any).__qScoreHistory = qScoreHistory;
 
       return makeResult(this.name, result, Date.now() - start);

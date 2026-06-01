@@ -59,7 +59,7 @@ export class DiffAgent implements Agent<DiffMetrics> {
       }
 
       const numstatMetrics = this.parseNumstat(numstatOutput);
-      const changedFiles = this.parseNameOnly(nameOnlyOutput, projectRoot);
+      const changedFiles = this.parseNameOnly(nameOnlyOutput, projectRoot, mode);
 
       const tsFilesChanged  = changedFiles.filter(f => TS_EXTS.has(path.extname(f))).length;
       const jsFilesChanged  = changedFiles.filter(f => JS_EXTS.has(path.extname(f))).length;
@@ -73,11 +73,11 @@ export class DiffAgent implements Agent<DiffMetrics> {
       const { locAdded, locRemoved } = numstatMetrics;
       const changeRatio = locRemoved / (locAdded + locRemoved + 1);
 
-      const commitAuthor = context.get('commitAuthor') ?? 'unknown';
+      const commitAuthor = this.resolveAuthorForExperience(context, mode);
       const authorExperience = this.getAuthorExperience(
         projectRoot,
         commitAuthor,
-        mode !== 'quick' ? commitHash : undefined
+        mode !== 'quick' ? commitHash : undefined,
       );
 
       const fileChurnAvg = this.getFileChurnAvg(projectRoot, changedFiles);
@@ -131,15 +131,20 @@ export class DiffAgent implements Agent<DiffMetrics> {
       return 'HEAD';
     }
 
-    // В CI проверяем переменные окружения GitHub Actions
     if (mode === 'ci') {
       const ghBase = process.env['GITHUB_BASE_REF'];
       if (ghBase) {
+        this.tryExecFile('git', ['fetch', 'origin', ghBase, '--depth=1'], projectRoot, '');
         const originBase = `origin/${ghBase}`;
         const result = this.tryExecFile('git', ['rev-parse', '--verify', originBase], projectRoot, '');
         if (result.trim()) {
-          logger.verbose(`DiffAgent: CI базовая ветка из GITHUB_BASE_REF: ${originBase}`);
+          logger.verbose(`DiffAgent: CI базовая ветка: ${originBase}`);
           return originBase;
+        }
+        const localBase = this.tryExecFile('git', ['rev-parse', '--verify', ghBase], projectRoot, '');
+        if (localBase.trim()) {
+          logger.verbose(`DiffAgent: CI базовая ветка (локальная): ${ghBase}`);
+          return ghBase;
         }
       }
     }
@@ -174,9 +179,12 @@ export class DiffAgent implements Agent<DiffMetrics> {
       const trimmed = line.trim();
       if (!trimmed) continue;
       const parts = trimmed.split('\t');
-      if (parts.length < 2) continue;
-      const added   = parseInt(parts[0], 10);
-      const removed = parseInt(parts[1], 10);
+      if (parts.length < 3) continue;
+
+      const addedRaw = parts[0];
+      const removedRaw = parts[1];
+      const added = addedRaw === '-' ? 0 : parseInt(addedRaw, 10);
+      const removed = removedRaw === '-' ? 0 : parseInt(removedRaw, 10);
       if (Number.isFinite(added))   locAdded   += added;
       if (Number.isFinite(removed)) locRemoved += removed;
     }
@@ -184,30 +192,79 @@ export class DiffAgent implements Agent<DiffMetrics> {
     return { locAdded, locRemoved };
   }
 
-  private parseNameOnly(output: string, projectRoot: string): string[] {
-    return output
-      .split('\n')
-      .map(f => f.trim())
-      .filter(f => f.length > 0)
-      .map(f => path.isAbsolute(f) ? f : path.join(projectRoot, f))
-      .filter(f => fs.existsSync(f));
+  private parseNameOnly(output: string, projectRoot: string, mode: string): string[] {
+    const seen = new Set<string>();
+    const files: string[] = [];
+
+    for (const raw of output.split('\n')) {
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+
+      let filePart = trimmed;
+      if (filePart.includes('=>')) {
+        const arrowParts = filePart.split('=>').map(p => p.trim());
+        filePart = arrowParts[arrowParts.length - 1] ?? filePart;
+      }
+      filePart = filePart.replace(/^\{.*\}$/, '').trim();
+      if (!filePart) continue;
+
+      const normalized = path.isAbsolute(filePart)
+        ? path.normalize(filePart)
+        : path.normalize(path.join(projectRoot, filePart));
+
+      const rel = path.relative(projectRoot, normalized).replace(/\\/g, '/');
+      if (rel.startsWith('..')) continue;
+
+      const key = rel || path.basename(normalized);
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      if (mode === 'ci') {
+        files.push(key);
+      } else if (fs.existsSync(normalized)) {
+        files.push(normalized);
+      } else {
+        files.push(key);
+      }
+    }
+
+    return files;
+  }
+
+  private resolveAuthorForExperience(context: RunContext, mode: string): string {
+    if (mode === 'ci') {
+      const actor = process.env['GITHUB_ACTOR'];
+      if (actor) return actor;
+    }
+    return context.get('commitAuthor') ?? 'unknown';
   }
 
   private getAuthorExperience(
     projectRoot: string,
     author: string,
-    excludeCommit?: string
+    excludeCommit?: string,
   ): number {
     if (!author || author === 'unknown') return 0;
 
-    const args = ['log', `--author=${author}`, '--oneline'];
-    if (excludeCommit && excludeCommit !== 'unknown') {
-      args.push('--not', excludeCommit);
+    const patterns = [
+      author,
+      author.includes('@') ? author : `${author}@`,
+    ];
+
+    for (const pattern of patterns) {
+      const args = ['log', `--author=${pattern}`, '--oneline'];
+      if (excludeCommit && excludeCommit !== 'unknown') {
+        args.push(`^${excludeCommit}`);
+      }
+
+      const output = this.tryExecFile('git', args, projectRoot, '');
+      if (!output.trim()) continue;
+
+      const count = output.trim().split('\n').filter(l => l.trim()).length;
+      if (count > 0) return count;
     }
 
-    const output = this.tryExecFile('git', args, projectRoot, '');
-    if (!output.trim()) return 0;
-    return output.trim().split('\n').filter(l => l.trim()).length;
+    return 0;
   }
 
   private getFileChurnAvg(projectRoot: string, files: string[]): number {
@@ -234,8 +291,10 @@ export class DiffAgent implements Agent<DiffMetrics> {
     let countedFiles = 0;
 
     for (const file of files) {
-      const relPath = path.relative(projectRoot, file).replace(/\\/g, '/');
-      totalChurn += churnMap.get(relPath) ?? 0;
+      const relPath = path.isAbsolute(file)
+        ? path.relative(projectRoot, file).replace(/\\/g, '/')
+        : file.replace(/\\/g, '/');
+      totalChurn += churnMap.get(relPath) ?? churnMap.get(file.replace(/\\/g, '/')) ?? 0;
       countedFiles++;
     }
 

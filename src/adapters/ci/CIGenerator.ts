@@ -2,9 +2,9 @@ import type { PulsqualConfig, CIPlatform, CITrigger } from '../../core/types.js'
 
 export interface CIGeneratorOptions {
   trigger: CITrigger;
-  qScoreThreshold: number;
   useLLM: boolean;
   llmSecretAdded: boolean;
+  useGitleaks: boolean;
 }
 
 export interface CIGenerator {

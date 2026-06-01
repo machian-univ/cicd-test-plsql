@@ -86,6 +86,7 @@ export class ReportGenerator {
       detectedVersions,
       achievements: (context.get('achievements')?.data ?? []) as Achievement[],
       llmReview: (context.get('llmReview')?.data ?? null) as LLMReviewResult | null,
+      projectRoot: context.get('projectRoot'),
     };
 
     const html = buildReportHtml(reportData);

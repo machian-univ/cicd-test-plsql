@@ -9,7 +9,8 @@ import {
   scoreColor,
   severityBadgeClass,
 } from './reportUtils.js';
-import { buildAiTab } from './sections/degradation.js';
+import { buildAiTab, buildDegradationOverviewCard } from './sections/degradation.js';
+import { formatReportFilePath } from '../utils/reportPath.js';
 
 export function buildReportHtml(data: ReportHtmlData): string {
     const {
@@ -24,7 +25,10 @@ export function buildReportHtml(data: ReportHtmlData): string {
       complexity, complexityErr, testRun, testRunErr,
       security, securityErr, degradation, diffMetrics,
       projectCtx, detectedVersions, achievements, llmReview,
+      projectRoot,
     } = data;
+
+    const fmtPath = (p: string) => formatReportFilePath(p, projectRoot);
 
     const qScore     = scores?.qScore ?? 0;
     const gatePassed = scores?.gatePassed ?? false;
@@ -58,12 +62,30 @@ export function buildReportHtml(data: ReportHtmlData): string {
           </div>`).join('')
       : '<p class="muted">Данные недоступны</p>';
 
-    // Прогресс 
+    const ciStatsSection = progress?.ciCheckStats ? `
+      <div class="glass-card" style="margin-top:16px">
+        <div class="panel-title">СТАТИСТИКА ПРОВЕРОК В PR</div>
+        <div class="stat-cards">
+          <div class="stat-card">
+            <div class="stat-num">${progress.ciCheckStats.total}</div>
+            <div class="stat-label">Всего запусков (вкл. текущий)</div>
+          </div>
+          <div class="stat-card stat-ok">
+            <div class="stat-num">${progress.ciCheckStats.passed}</div>
+            <div class="stat-label">Порог пройден</div>
+          </div>
+          <div class="stat-card ${progress.ciCheckStats.failed > 0 ? 'stat-crit' : 'stat-ok'}">
+            <div class="stat-num">${progress.ciCheckStats.failed}</div>
+            <div class="stat-label">Порог не пройден</div>
+          </div>
+        </div>
+      </div>` : '';
+
     const progressSection = progress ? `
       <div class="progress-strip">
         <div class="progress-card">
           <div class="progress-label">Предыдущий Q-Score</div>
-          <div class="progress-val">${progress.previousQScore !== null ? progress.previousQScore.toFixed(1) : '—'}</div>
+          <div class="progress-val">${progress.previousQScore !== null && progress.previousQScore !== undefined ? progress.previousQScore.toFixed(1) : '—'}</div>
         </div>
         <div class="progress-card">
           <div class="progress-label">Изменение</div>
@@ -79,7 +101,8 @@ export function buildReportHtml(data: ReportHtmlData): string {
           <div class="progress-label">Всего проверок</div>
           <div class="progress-val">${progress.checksCount}</div>
         </div>
-      </div>` : '';
+      </div>
+      ${ciStatsSection}` : '';
 
     const achievementsHtml = achievements.length > 0
       ? achievements.map((a: Achievement) => `
@@ -127,7 +150,9 @@ export function buildReportHtml(data: ReportHtmlData): string {
 
       ${progressSection}
 
-      ${historyForChart.length > 1 ? `
+      ${buildDegradationOverviewCard(degradation)}
+
+      ${historyForChart.length > 0 ? `
       <div class="glass-card" style="margin-top:16px">
         <div class="panel-title">ИСТОРИЯ Q-SCORE</div>
         <div style="height:200px;position:relative">
@@ -144,7 +169,7 @@ export function buildReportHtml(data: ReportHtmlData): string {
 
     // 2: Статический анализ 
     const lintFileDetails = topIssueFiles.map((file: LintResult) => {
-      const shortPath = shortenPath(file.filePath);
+      const shortPath = fmtPath(file.filePath);
       const errMsgs = file.eslintMessages
         .filter((m: any) => m.severity === 2)
         .map((m: any) => `<div class="msg-row err-row">
@@ -215,8 +240,8 @@ export function buildReportHtml(data: ReportHtmlData): string {
     // 3: Сложность 
     const complexityViolationRows = (complexity?.violations ?? []).map((v: any) => `
       <tr>
-        <td class="mono cell-overflow">${escapeHtml(shortenPath(v.file))}</td>
-        <td class="mono cell-overflow">${escapeHtml(v.function)}</td>
+        <td class="mono file-path-cell">${escapeHtml(fmtPath(v.file))}</td>
+        <td class="mono">${escapeHtml(v.function)}</td>
         <td class="${v.complexity > thresholdComplexity ? 'val-crit' : 'val-ok'}">${v.complexity}</td>
         <td>${v.line ?? '—'}</td>
       </tr>`).join('');
@@ -224,31 +249,36 @@ export function buildReportHtml(data: ReportHtmlData): string {
     const fileLocs = complexity?.fileLocs ?? [];
     const locTableRows = fileLocs.slice(0, 20).map((f: any) => `
       <tr>
-        <td class="mono cell-overflow">${escapeHtml(shortenPath(f.filePath))}</td>
+        <td class="mono file-path-cell">${escapeHtml(fmtPath(f.filePath))}</td>
         <td>${f.totalLines}</td>
       </tr>`).join('');
 
-    const tab3 = `
-      ${sectionWarning(complexityErr)}
+    const complexitySkipped = complexity?.status === 'skipped';
+    const complexityMetricsHtml = complexity && !complexitySkipped ? `
       <div class="stat-cards">
-        <div class="stat-card ${(complexity?.maxComplexity ?? 0) > thresholdComplexity ? 'stat-crit' : 'stat-ok'}">
-          <div class="stat-num">${complexity?.maxComplexity ?? 0}</div>
-          <div class="stat-label">Макс. сложность (порог: ${thresholdComplexity})</div>
+        <div class="stat-card ${(complexity.maxComplexity ?? 0) > thresholdComplexity ? 'stat-crit' : 'stat-ok'}">
+          <div class="stat-num">${complexity.maxComplexity ?? 0}</div>
+          <div class="stat-label">Макс. сложность (порог Pulsqual: ${thresholdComplexity})</div>
         </div>
         <div class="stat-card">
-          <div class="stat-num">${complexity?.averageComplexity ?? 0}</div>
+          <div class="stat-num">${complexity.averageComplexity ?? 0}</div>
           <div class="stat-label">Средняя сложность</div>
         </div>
-        <div class="stat-card ${(complexity?.violations.length ?? 0) > 0 ? 'stat-crit' : 'stat-ok'}">
-          <div class="stat-num">${complexity?.violations.length ?? 0}</div>
+        <div class="stat-card ${(complexity.violations?.length ?? 0) > 0 ? 'stat-crit' : 'stat-ok'}">
+          <div class="stat-num">${complexity.violations?.length ?? 0}</div>
           <div class="stat-label">Нарушений порога</div>
         </div>
         <div class="stat-card">
-          <div class="stat-num">${complexity?.totalLoc ?? 0}</div>
+          <div class="stat-num">${complexity.totalLoc ?? 0}</div>
           <div class="stat-label">Всего строк кода</div>
         </div>
-      </div>
-      ${complexity?.violations.length ? `
+      </div>` : '';
+
+    const tab3 = `
+      ${sectionWarning(complexityErr)}
+      ${complexitySkipped ? `<div class="tool-warning"><span class="warn-icon">⚠</span>${escapeHtml(complexity?.errorMessage ?? 'Метрики сложности недоступны')}</div>` : ''}
+      ${complexityMetricsHtml}
+      ${complexity?.violations?.length ? `
         <div class="section-subtitle">Функции с высокой сложностью</div>
         <div class="table-wrap">
         <table>
@@ -361,7 +391,7 @@ export function buildReportHtml(data: ReportHtmlData): string {
           <div class="stat-num">${security?.auditModerate ?? 0}</div>
           <div class="stat-label">Средний риск</div>
         </div>
-        <div class="stat-card">
+        <div class="stat-card ${(security?.auditLow ?? 0) > 0 ? 'stat-warn' : 'stat-ok'}">
           <div class="stat-num">${security?.auditLow ?? 0}</div>
           <div class="stat-label">Низкий риск</div>
         </div>
@@ -419,7 +449,7 @@ export function buildReportHtml(data: ReportHtmlData): string {
       </div>` : '';
 
     const changedFilesList = (diffMetrics?.changedFiles ?? []).slice(0, 50).map((f: any) =>
-      `<li class="mono cell-overflow">${escapeHtml(shortenPath(f))}</li>`).join('');
+      `<li class="mono file-path-cell">${escapeHtml(fmtPath(f))}</li>`).join('');
 
     const tab6 = diffMetrics ? `
       ${isCiMode ? prCommitsTable : headCommitSection}
@@ -459,12 +489,8 @@ export function buildReportHtml(data: ReportHtmlData): string {
           <span class="info-val ${diffMetrics.hasTestsChanged ? 'val-ok' : 'val-warn'}">${diffMetrics.hasTestsChanged ? 'Да ✓' : 'Нет'}</span>
         </div>
         <div class="info-item">
-          <span class="info-label">Конфиг затронут</span>
-          <span class="info-val ${diffMetrics.hasConfigChanged ? 'val-warn' : ''}">${diffMetrics.hasConfigChanged ? 'Да ⚠' : 'Нет'}</span>
-        </div>
-        <div class="info-item">
           <span class="info-label">Соотношение удалений</span>
-          <span class="info-val">${diffMetrics.changeRatio.toFixed(2)}</span>
+          <span class="info-val">${(diffMetrics.changeRatio * 100).toFixed(1)}%</span>
         </div>
         <div class="info-item">
           <span class="info-label">Опыт автора</span>
@@ -637,9 +663,10 @@ export function buildReportHtml(data: ReportHtmlData): string {
           <div class="calc-section">
             <div class="calc-title">ML-модель деградации</div>
             <div class="calc-desc">
-              CatBoost-регрессор предсказывает индекс стабильности кода (0–1, выше = стабильнее).
-              Значения выше 0.5 означают стабильность, ниже — деградацию.
-              <br><code>индексСтабильности = model.predict(features)  // ∈ [0, 1]</code>
+              CatBoost-регрессор предсказывает индекс стабильности (0–1). В отчёте он показан в процентах.
+              Цветовая шкала: 75–100% зелёный, 25–75% жёлтый, 0–25% красный.
+              Прогноз «деградация» при индексе &lt; 0.5 (50%).
+              <br><code>индексСтабильности = model.predict(features)</code>
               <br><code>degradationScore = (1 − индексСтабильности) × 100</code>
               <br><code>componentScore = max(0, 100 − degradationScore)</code>
             </div>
@@ -676,8 +703,13 @@ export function buildReportHtml(data: ReportHtmlData): string {
 
     // Хедер с пульсом 
     const modeLabel = isCiMode ? 'CI / PULL REQUEST' : 'ЛОКАЛЬНАЯ ПРОВЕРКА';
+    const headBranch = branch;
+    const baseBranch = (diffMetrics?.baseRef ?? 'origin/main').replace(/^origin\//, '');
+    const mergeBanner = isCiMode
+      ? `<div class="header-merge-banner">Merge into: <strong>${escapeHtml(headBranch)}</strong> → <strong>${escapeHtml(baseBranch)}</strong></div>`
+      : '';
     const commitMsgDisplay = commitInfo?.message
-      ? escapeHtml(commitInfo.message.slice(0, 80)) + (commitInfo.message.length > 80 ? '…' : '')
+      ? escapeHtml(commitInfo.message)
       : '';
 
     // Сборка HTML 
@@ -711,6 +743,7 @@ export function buildReportHtml(data: ReportHtmlData): string {
         <span class="hbadge ${gatePassed ? 'gate-pass' : 'gate-fail'}" style="border-radius:4px">${gatePassed ? '✓ GATE PASS' : '✗ GATE FAIL'}</span>
       </div>
     </div>
+    ${mergeBanner}
     ${commitMsgDisplay ? `<div class="header-commit-msg">${commitMsgDisplay}</div>` : ''}
   </div>
 

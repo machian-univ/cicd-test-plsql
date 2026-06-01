@@ -41,15 +41,15 @@ export async function runCiSetup(): Promise<void> {
 
   const trigger = triggerChoice as CITrigger;
 
-  const { qScoreThreshold } = await inquirer.prompt([{
-    type: 'input',
-    name: 'qScoreThreshold',
-    message: 'Минимальный Q-Score для прохождения проверки?',
-    default: String(config.thresholds.q_score),
-    validate: (v: string) =>
-      !isNaN(parseFloat(v)) && parseFloat(v) >= 0 && parseFloat(v) <= 100
-        ? true
-        : 'Введите число от 0 до 100',
+  logger.info(
+    `Порог Q-Score для CI берётся из .pulsqual.yml: ${config.thresholds.q_score}`,
+  );
+
+  const { useGitleaks } = await inquirer.prompt([{
+    type: 'confirm',
+    name: 'useGitleaks',
+    message: 'Проводить проверку секретов с помощью gitleaks в CI?',
+    default: true,
   }]);
 
   const { useLLM } = await inquirer.prompt([{
@@ -98,9 +98,9 @@ export async function runCiSetup(): Promise<void> {
 
   const workflowContent = generator.generate(config, {
     trigger,
-    qScoreThreshold: parseFloat(qScoreThreshold),
     useLLM,
     llmSecretAdded,
+    useGitleaks,
   });
 
   const workflowDir = path.join(root, '.github', 'workflows');

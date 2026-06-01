@@ -10,13 +10,12 @@ import type {
   ComplexityViolation,
   FileLoc,
 } from '../../core/types.js';
+import { logger } from '../../utils/logger.js';
 
-// Правила когнитивной сложности (sonarjs)
 const COGNITIVE_RULES = new Set([
   'sonarjs/cognitive-complexity',
 ]);
 
-// Правила цикломатической сложности (встроенное ESLint)
 const CYCLOMATIC_RULES = new Set([
   'complexity',
   '@typescript-eslint/complexity',
@@ -31,11 +30,11 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
     try {
       const shared  = context.get('analysisShared');
       const config  = context.get('config');
+      const project = context.get('projectContext')?.data;
       const maxAllowed = config.thresholds.max_complexity;
 
       const complexityMessages: EslintComplexityMessage[] = shared?.eslintComplexityMessages ?? [];
 
-      // считаем LOC по файлам из lintResults
       const fileLocs = this.computeFileLocs(context);
       const totalLoc = fileLocs.reduce((sum, f) => sum + f.totalLines, 0);
       const avgFileLoc = fileLocs.length > 0
@@ -43,13 +42,22 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
         : 0;
 
       if (complexityMessages.length === 0) {
+        const hasSonarjs = Boolean(project?.detectedVersions?.sonarjs?.valid);
+        const hint = !hasSonarjs
+          ? 'Установите eslint-plugin-sonarjs и включите правило sonarjs/cognitive-complexity или complexity в eslint.config. Запустите: pulsqual init'
+          : 'Включите в eslint.config правило complexity или sonarjs/cognitive-complexity. Pulsqual собирает метрики из сообщений ESLint.';
+
+        logger.warn(`ComplexityAgent: ${hint}`);
+
         return makeResult(this.name, {
           maxComplexity: 0,
           averageComplexity: 0,
           violations: [],
           complexityType: 'unknown',
           status: 'skipped',
-          errorMessage: 'Нет данных о сложности. Установите eslint-plugin-sonarjs или включите правило complexity.',
+          skipReason: 'no_plugin_or_rule',
+          errorMessage: hint,
+          thresholdExceeded: false,
           fileLocs,
           totalLoc,
           avgFileLoc,
@@ -69,12 +77,20 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
           function: m.functionName,
           complexity: m.complexity,
           line: m.line,
-          // LOC функции не можем определить без AST-анализа, оставляем undefined
           functionLoc: undefined,
         }))
         .sort((a, b) => b.complexity - a.complexity);
 
-      const complexityType: ComplexityResult['complexityType'] = this.detectComplexityType(complexityMessages);
+      const thresholdExceeded = maxComplexity > maxAllowed;
+      if (thresholdExceeded) {
+        logger.warn(
+          `ComplexityAgent: превышен порог сложности (${maxComplexity} > ${maxAllowed}). ` +
+          `Нарушений: ${violations.length}`,
+        );
+      }
+
+      const complexityType: ComplexityResult['complexityType'] =
+        this.detectComplexityType(complexityMessages);
 
       const result: ComplexityResult = {
         maxComplexity,
@@ -82,6 +98,7 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
         violations,
         complexityType,
         status: 'ok',
+        thresholdExceeded,
         fileLocs,
         totalLoc,
         avgFileLoc,
@@ -96,6 +113,7 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
         complexityType: 'unknown',
         status: 'error',
         errorMessage: err instanceof Error ? err.message : String(err),
+        thresholdExceeded: false,
         fileLocs: [],
         totalLoc: 0,
         avgFileLoc: 0,
@@ -112,18 +130,15 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
       if (CYCLOMATIC_RULES.has(m.ruleId))  hasCyclomatic = true;
     }
 
-    // Если есть оба типа — приоритет у когнитивной (более информативна)
     if (hasCognitive)  return 'cognitive';
     if (hasCyclomatic) return 'cyclomatic';
     return 'unknown';
   }
 
-  // подсчёт LOC по файлам из lintResults (физический размер файлов)
   private computeFileLocs(context: RunContext): FileLoc[] {
     const lintData = context.get('lintResults')?.data ?? [];
+    const projectRoot = context.get('projectRoot');
     const fileLocs: FileLoc[] = [];
-
-    // Собираем уникальные пути файлов из lint-результатов
     const filePaths = new Set(lintData.map(r => r.filePath));
 
     for (const filePath of filePaths) {
@@ -136,13 +151,28 @@ export class ComplexityAgent implements Agent<ComplexityResult> {
         fileLocs.push({
           filePath,
           totalLines,
-          // avgFunctionLoc: без AST-анализа не можем определить точно
-          // используем грубую эвристику: если есть данные сложности по этому файлу
           avgFunctionLoc: undefined,
         });
       } catch {
-        // Файл недоступен — пропускаем
+        // пропуск
       }
+    }
+
+    // Дополнительно: файлы из diff с метриками сложности
+    const diffFiles = context.get('diffResult')?.data?.changedFiles ?? [];
+    for (const filePath of diffFiles) {
+      const abs = path.isAbsolute(filePath)
+        ? filePath
+        : path.join(projectRoot, filePath);
+      if (!fs.existsSync(abs) || filePaths.has(abs)) continue;
+      try {
+        const content = fs.readFileSync(abs, 'utf8');
+        fileLocs.push({
+          filePath: abs,
+          totalLines: content.split('\n').length,
+          avgFunctionLoc: undefined,
+        });
+      } catch { /* ignore */ }
     }
 
     return fileLocs;
