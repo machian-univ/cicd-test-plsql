@@ -12,7 +12,8 @@
     "degradation_model.onnx"
   ],
   "scripts": {
-    "build": "tsc && node -e \"const fs=require('fs');const p='dist/degradation_model.onnx';if(fs.existsSync('degradation_model.onnx'))fs.copyFileSync('degradation_model.onnx',p);\"",
+    "build": "tsc && node -e \"const fs=require('fs'); ['dist', 'dist/bin', 'dist/src'].forEach(d => { if(!fs.existsSync(d)) fs.mkdirSync(d, {recursive:true}); if(fs.existsSync('degradation_model.onnx')) fs.copyFileSync('degradation_model.onnx', d+'/degradation_model.onnx'); });\"",
+    "prepare": "npm run build",
     "dev": "ts-node bin/pulsqual.ts",
     "start": "node dist/bin/pulsqual.js",
     "test": "vitest run",
