@@ -29,8 +29,6 @@ export class DiffAgent implements Agent<DiffMetrics> {
     const start = Date.now();
     const projectRoot = context.get('projectRoot');
     const mode = context.get('mode');
-    const commitHash = context.get('commitHash');
-
     try {
       const baseRef = this.resolveBaseRef(mode, projectRoot);
 
@@ -73,12 +71,16 @@ export class DiffAgent implements Agent<DiffMetrics> {
       const { locAdded, locRemoved } = numstatMetrics;
       const changeRatio = locRemoved / (locAdded + locRemoved + 1);
 
-      const commitAuthor = this.resolveAuthorForExperience(context, mode);
-      const authorExperience = this.getAuthorExperience(
-        projectRoot,
-        commitAuthor,
-        mode !== 'quick' ? commitHash : undefined,
-      );
+      const authorIdentity = this.resolveAuthorIdentity(context, mode, projectRoot);
+      const authorExperience = this.getAuthorExperience(projectRoot, authorIdentity);
+      if (authorExperience === 0) {
+        logger.verbose(
+          `DiffAgent: опыт автора не определён (имя: "${authorIdentity.name}", ` +
+          `email: "${authorIdentity.email || '—'}")`,
+        );
+      } else {
+        logger.verbose(`DiffAgent: опыт автора — ${authorExperience} коммитов`);
+      }
 
       const fileChurnAvg = this.getFileChurnAvg(projectRoot, changedFiles);
 
@@ -231,40 +233,86 @@ export class DiffAgent implements Agent<DiffMetrics> {
     return files;
   }
 
-  private resolveAuthorForExperience(context: RunContext, mode: string): string {
-    if (mode === 'ci') {
-      const actor = process.env['GITHUB_ACTOR'];
-      if (actor) return actor;
-    }
-    return context.get('commitAuthor') ?? 'unknown';
+  private resolveAuthorIdentity(
+    context: RunContext,
+    mode: string,
+    projectRoot: string,
+  ): { name: string; email: string; login?: string } {
+    const headLine = this.tryExecFile(
+      'git',
+      ['log', '-1', '--format=%aN|%aE'],
+      projectRoot,
+      '',
+    );
+    const [headName = '', headEmail = ''] = headLine.split('|').map(s => s.trim());
+
+    const ctxAuthor = context.get('commitAuthor') ?? '';
+    const login =
+      mode === 'ci'
+        ? (process.env['GITHUB_ACTOR'] ?? process.env['CI_COMMIT_AUTHOR'] ?? undefined)
+        : undefined;
+
+    return {
+      name: headName || ctxAuthor || 'unknown',
+      email: headEmail,
+      login,
+    };
   }
 
   private getAuthorExperience(
     projectRoot: string,
-    author: string,
-    excludeCommit?: string,
+    identity: { name: string; email: string; login?: string },
   ): number {
-    if (!author || author === 'unknown') return 0;
+    const patterns = this.buildAuthorPatterns(identity);
+    if (patterns.length === 0) return 0;
 
-    const patterns = [
-      author,
-      author.includes('@') ? author : `${author}@`,
-    ];
-
+    let maxCount = 0;
     for (const pattern of patterns) {
-      const args = ['log', `--author=${pattern}`, '--oneline'];
-      if (excludeCommit && excludeCommit !== 'unknown') {
-        args.push(`^${excludeCommit}`);
-      }
-
-      const output = this.tryExecFile('git', args, projectRoot, '');
-      if (!output.trim()) continue;
-
-      const count = output.trim().split('\n').filter(l => l.trim()).length;
-      if (count > 0) return count;
+      const count = this.countCommitsByAuthor(projectRoot, pattern);
+      if (count > maxCount) maxCount = count;
     }
 
-    return 0;
+    return maxCount;
+  }
+
+  private buildAuthorPatterns(identity: {
+    name: string;
+    email: string;
+    login?: string;
+  }): string[] {
+    const patterns = new Set<string>();
+
+    const add = (value?: string) => {
+      const v = value?.trim();
+      if (!v || v === 'unknown') return;
+      patterns.add(v);
+      if (v.includes('@')) {
+        const local = v.split('@')[0];
+        if (local) patterns.add(local);
+      }
+    };
+
+    add(identity.name);
+    add(identity.email);
+    add(identity.login);
+
+    // «Иван Иванов» → пробуем фамилию и имя отдельно (git --author ищет по regex)
+    const nameParts = identity.name.split(/\s+/).filter(p => p.length > 1);
+    for (const part of nameParts) add(part);
+
+    return [...patterns];
+  }
+
+  private countCommitsByAuthor(projectRoot: string, pattern: string): number {
+    const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const output = this.tryExecFile(
+      'git',
+      ['rev-list', '--all', '--count', `--author=${escaped}`],
+      projectRoot,
+      '0',
+    );
+    const count = parseInt(output.trim(), 10);
+    return Number.isFinite(count) ? count : 0;
   }
 
   private getFileChurnAvg(projectRoot: string, files: string[]): number {

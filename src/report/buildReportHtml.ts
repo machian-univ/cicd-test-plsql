@@ -44,8 +44,8 @@ export function buildReportHtml(data: ReportHtmlData): string {
       if (!errMsg) return '';
       return `<div class="tool-warning">
         <span class="warn-icon">⚠</span>
-        Результат данного раздела может быть искажён из-за ошибки настройки окружения.
-        Рекомендуется проверить конфигурацию инструментов и повторить анализ.
+        <div class="tool-warning-text">Результат данного раздела может быть искажён из-за ошибки настройки окружения.
+        Рекомендуется проверить конфигурацию инструментов и повторить анализ.</div>
       </div>`;
     };
 
@@ -276,7 +276,7 @@ export function buildReportHtml(data: ReportHtmlData): string {
 
     const tab3 = `
       ${sectionWarning(complexityErr)}
-      ${complexitySkipped ? `<div class="tool-warning"><span class="warn-icon">⚠</span>${escapeHtml(complexity?.errorMessage ?? 'Метрики сложности недоступны')}</div>` : ''}
+      ${complexitySkipped ? `<div class="tool-warning"><span class="warn-icon">⚠</span><div class="tool-warning-text">${escapeHtml(complexity?.errorMessage ?? 'Метрики сложности недоступны')}</div></div>` : ''}
       ${complexityMetricsHtml}
       ${complexity?.violations?.length ? `
         <div class="section-subtitle">Функции с высокой сложностью</div>
@@ -354,7 +354,7 @@ export function buildReportHtml(data: ReportHtmlData): string {
       </div>
       ${coverageItems ? `<div class="stat-cards">${coverageItems}</div>` : ''}
       ${testRun?.status === 'skipped' ? `<div class="muted">${(testRun as any).errorMessage ?? 'Тесты пропущены'}</div>` : ''}
-      ${testRun?.status === 'error' ? `<div class="tool-warning"><span class="warn-icon">⚠</span> Ошибка запуска тестов: ${escapeHtml((testRun as any).errorMessage ?? '')}</div>` : ''}
+      ${testRun?.status === 'error' ? `<div class="tool-warning"><span class="warn-icon">⚠</span><div class="tool-warning-text">Ошибка запуска тестов: ${escapeHtml((testRun as any).errorMessage ?? '')}</div></div>` : ''}
       ${failedTestRows ? `<div class="section-subtitle">Не прошедшие тесты</div><div class="file-list">${failedTestRows}</div>` : ''}
       ${(testRunOk?.failed ?? 0) === 0 && testRun?.status === 'ok' ? '<div class="success-msg">✓ Все тесты прошли успешно.</div>' : ''}
     `;

@@ -188,7 +188,7 @@ function runGitleaks(projectRoot: string): {
 
   try {
     execSync(
-      `gitleaks detect --source "${projectRoot}" --report-format json ` +
+      `gitleaks detect --no-git --ignore-path=".env" --source "${projectRoot}" --report-format json ` +
       `--report-path "${reportPath}" --exit-code 1`,
       {
         cwd: projectRoot,

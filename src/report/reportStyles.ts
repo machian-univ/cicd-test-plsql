@@ -271,8 +271,27 @@ export const REPORT_STYLES = `
 
     .success-msg { color: var(--accent); background: rgba(0,255,136,.07); border: 1px solid rgba(0,255,136,.2); border-radius: var(--radius); padding: 10px 14px; font-size: 0.82rem; }
 
-    .tool-warning { color: var(--yellow); background: rgba(255,204,0,.06); border: 1px solid rgba(255,204,0,.2); border-radius: var(--radius); padding: 10px 14px; font-size: 0.8rem; margin-bottom: 12px; display: flex; align-items: flex-start; gap: 8px; }
-    .warn-icon { flex-shrink: 0; font-size: 1rem; }
+    .tool-warning {
+      color: var(--yellow);
+      background: rgba(255,204,0,.06);
+      border: 1px solid rgba(255,204,0,.2);
+      border-radius: var(--radius);
+      padding: 10px 14px;
+      font-size: 0.8rem;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .warn-icon {
+      flex-shrink: 0;
+      font-size: 1rem;
+      line-height: 1;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .tool-warning-text { flex: 1; line-height: 1.45; }
 
     .details-toggle { cursor: pointer; font-size: 0.78rem; font-weight: 600; color: var(--accent); padding: 4px 0; list-style: none; font-family: var(--font-mono); }
     .details-toggle:hover { text-decoration: underline; }

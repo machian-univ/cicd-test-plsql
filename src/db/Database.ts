@@ -565,20 +565,27 @@ export class Database {
     }));
   }
 
+  /**
+   * Q-Score последней сохранённой проверки.
+   * Вызывается до записи текущего прогона — в БД ещё нет текущей проверки.
+   */
   async getPreviousQScore(): Promise<number | null> {
     await this.ready;
 
     const result = this.db.exec(
       `SELECT q_score
        FROM checks
+       WHERE mode IN ('full', 'ci')
+         AND q_score IS NOT NULL
        ORDER BY created_at DESC
-       LIMIT 1 OFFSET 1`
+       LIMIT 1`,
     );
 
     if (!result[0] || result[0].values.length === 0) return null;
 
     const value = result[0].values[0]?.[0] as number | null;
-    return value ?? null;
+    if (value === null || value === undefined) return null;
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
 
 

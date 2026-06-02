@@ -6,7 +6,7 @@ export function buildLlmSection(llmReview: LLMReviewResult | null | undefined): 
       <div class="panel-title" style="margin-top:24px">LLM-РЕЦЕНЗИРОВАНИЕ</div>
       <div class="tool-warning">
         <span class="warn-icon">ℹ</span>
-        <div>
+        <div class="tool-warning-text">
           LLM-рецензирование отключено. Включите:
           <code>pulsqual config llm enable</code>
         </div>
@@ -18,7 +18,7 @@ export function buildLlmSection(llmReview: LLMReviewResult | null | undefined): 
       <div class="panel-title" style="margin-top:24px">LLM-РЕЦЕНЗИРОВАНИЕ</div>
       <div class="tool-warning">
         <span class="warn-icon">⚠</span>
-        <div>Ошибка LLM: ${escapeHtml(llmReview.errorMessage ?? 'Неизвестная ошибка')}</div>
+        <div class="tool-warning-text">Ошибка LLM: ${escapeHtml(llmReview.errorMessage ?? 'Неизвестная ошибка')}</div>
       </div>`;
   }
 
